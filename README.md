@@ -139,8 +139,6 @@ alias ReqAnthropic.Tools
 tools = [
   Tools.web_search(max_uses: 5),
   Tools.web_fetch(),
-  Tools.bash(),
-  Tools.text_editor(),
   Tools.custom(
     name: "get_weather",
     description: "Look up the weather for a city.",
@@ -148,17 +146,26 @@ tools = [
       type: "object",
       properties: %{city: %{type: "string"}},
       required: ["city"]
-    }
+    },
+    function: fn %{"city" => city} ->
+      # Your real implementation here
+      "72°F and sunny in #{city}"
+    end
   )
 ]
 
-ReqAnthropic.Messages.create(
-  model: "claude-sonnet-4-6",
-  max_tokens: 1024,
-  tools: tools,
-  messages: [%{role: "user", content: "What's the weather in Tokyo?"}]
-)
+{:ok, message} =
+  ReqAnthropic.Messages.run(
+    model: "claude-sonnet-4-6",
+    max_tokens: 1024,
+    tools: tools,
+    messages: [%{role: "user", content: "What's the weather in Tokyo?"}]
+  )
 ```
+
+`Messages.run/1` automatically executes custom tools that have a `:function`
+and loops until the model produces a final response. Use `Messages.create/1`
+instead if you want to handle tool calls manually.
 
 Available builders: `web_search/1`, `web_fetch/1`, `bash/1`, `text_editor/1`,
 `computer/1`, `memory/1`, `advisor/1`, `custom/1`.

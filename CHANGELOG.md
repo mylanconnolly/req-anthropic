@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1]
+
+### Fixed
+
+- Fixed base URL not being applied to requests. The `auth_step` was
+  appended after Req's built-in `put_base_url` step, so relative paths
+  like `/v1/messages` were sent to Finch without a scheme, producing
+  `ArgumentError: scheme is required for url`. The step is now prepended
+  so the base URL is set before Req resolves it.
+- Set a default `receive_timeout` of 120 seconds in `Client.build/1`.
+  Finch's 15-second default was too short for LLM API calls, causing
+  `Req.TransportError` (`:closed`) on longer requests.
+
+### Added
+
+- `Tools.custom/1` now accepts an optional `:function` (1-arity) that
+  `Messages.run/1` will call automatically when the model invokes the
+  tool.
+- `Tools.function_map/1` — builds a `%{name => function}` lookup from a
+  list of tool maps.
+- `Messages.run/1` — sends a message and automatically executes tool
+  calls that have a registered `:function`, looping until the model
+  produces a final response. Accepts `:max_rounds` (default 10) to cap
+  the number of round-trips.
+
 ## [0.1.0]
 
 Initial release.
@@ -55,5 +80,6 @@ Initial release.
   message history and default request options for repeated `Messages`
   calls.
 
-[Unreleased]: https://github.com/mylanconnolly/req_anthropic/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mylanconnolly/req_anthropic/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mylanconnolly/req_anthropic/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mylanconnolly/req_anthropic/releases/tag/v0.1.0

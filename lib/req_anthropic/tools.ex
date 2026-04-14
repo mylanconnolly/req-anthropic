@@ -96,14 +96,33 @@ defmodule ReqAnthropic.Tools do
     %{type: @advisor_type, name: "advisor", __beta__: @advisor_beta}
   end
 
-  @doc "Define a custom tool with a JSON Schema input."
+  @doc """
+  Define a custom tool with a JSON Schema input.
+
+  An optional `:function` (1-arity) can be provided. When present,
+  `Messages.run/1` will call it automatically with the tool input map
+  whenever the model invokes this tool, and feed the result back.
+
+      Tools.custom(
+        name: "get_weather",
+        description: "Look up the weather for a city.",
+        input_schema: %{type: "object", properties: %{city: %{type: "string"}}, required: ["city"]},
+        function: fn %{"city" => city} -> "72°F and sunny in \#{city}" end
+      )
+  """
   @spec custom(keyword()) :: map()
   def custom(opts) do
-    %{
+    base = %{
       name: Keyword.fetch!(opts, :name),
       description: Keyword.fetch!(opts, :description),
       input_schema: Keyword.fetch!(opts, :input_schema)
     }
+
+    case Keyword.get(opts, :function) do
+      nil -> base
+      fun when is_function(fun, 1) -> Map.put(base, :__function__, fun)
+      _ -> raise ArgumentError, ":function must be a 1-arity function"
+    end
   end
 
   @doc """
@@ -120,11 +139,24 @@ defmodule ReqAnthropic.Tools do
   end
 
   @doc """
-  Strip internal `__beta__` markers from a list of tool maps so they can
-  be safely sent over the wire.
+  Strip internal markers (`__beta__`, `__function__`) from a list of tool
+  maps so they can be safely sent over the wire.
   """
   @spec strip([map()]) :: [map()]
   def strip(tools) when is_list(tools) do
-    Enum.map(tools, &Map.delete(&1, :__beta__))
+    Enum.map(tools, fn tool ->
+      tool |> Map.delete(:__beta__) |> Map.delete(:__function__)
+    end)
+  end
+
+  @doc """
+  Build a `%{name => function}` lookup from a list of tool maps. Only
+  tools that carry a `__function__` are included.
+  """
+  @spec function_map([map()]) :: %{String.t() => (map() -> term())}
+  def function_map(tools) when is_list(tools) do
+    for %{name: name, __function__: fun} <- tools, into: %{} do
+      {name, fun}
+    end
   end
 end

@@ -73,7 +73,7 @@ defmodule ReqAnthropic do
     request
     |> Req.Request.register_options(@options)
     |> Req.Request.merge_options(options)
-    |> Req.Request.append_request_steps(req_anthropic_auth: &auth_step/1)
+    |> Req.Request.prepend_request_steps(req_anthropic_auth: &auth_step/1)
     |> Req.Request.append_response_steps(req_anthropic_decode_error: &decode_error_step/1)
   end
 

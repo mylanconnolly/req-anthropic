@@ -16,7 +16,7 @@ defmodule ReqAnthropic.Messages do
       stream |> ReqAnthropic.Messages.text_deltas() |> Enum.each(&IO.write/1)
   """
 
-  alias ReqAnthropic.{Client, Error, SSE}
+  alias ReqAnthropic.{Client, Error, SSE, Tools}
 
   @path "/v1/messages"
   @count_path "/v1/messages/count_tokens"
@@ -45,6 +45,102 @@ defmodule ReqAnthropic.Messages do
       {:ok, body} -> body
       {:error, error} -> raise error
     end
+  end
+
+  @doc """
+  Send a message and automatically execute any tool calls that have a
+  registered `:function` (see `ReqAnthropic.Tools.custom/1`), looping
+  until the model produces a final (non-tool-use) response.
+
+  Accepts all the same options as `create/1`, plus:
+
+    * `:max_rounds` — maximum number of tool-use round-trips before
+      returning an error (default: `10`).
+
+  Tools without a `:function` that the model tries to call will receive
+  an error tool result so the model can recover gracefully.
+
+  ## Example
+
+      alias ReqAnthropic.Tools
+
+      tools = [
+        Tools.custom(
+          name: "get_weather",
+          description: "Look up the weather for a city.",
+          input_schema: %{
+            type: "object",
+            properties: %{city: %{type: "string"}},
+            required: ["city"]
+          },
+          function: fn %{"city" => city} ->
+            "72°F and sunny in \#{city}"
+          end
+        )
+      ]
+
+      {:ok, message} =
+        ReqAnthropic.Messages.run(
+          model: "claude-sonnet-4-6",
+          max_tokens: 1024,
+          tools: tools,
+          messages: [%{role: "user", content: "What's the weather in Tokyo?"}]
+        )
+  """
+  @spec run(keyword() | map()) :: {:ok, map()} | {:error, Error.t() | Exception.t()}
+  def run(opts) do
+    opts = if is_map(opts), do: Map.to_list(opts), else: opts
+    {max_rounds, opts} = Keyword.pop(opts, :max_rounds, 10)
+    tools = Keyword.get(opts, :tools, [])
+    fns = Tools.function_map(tools)
+    opts = Keyword.put(opts, :tools, Tools.strip(tools))
+
+    do_run(opts, fns, max_rounds)
+  end
+
+  defp do_run(_opts, _fns, 0) do
+    {:error,
+     %Error{type: "max_rounds_exceeded", message: "tool-use loop exceeded maximum rounds"}}
+  end
+
+  defp do_run(opts, fns, rounds_remaining) do
+    case create(opts) do
+      {:ok, %{"stop_reason" => "tool_use", "content" => content} = _message} ->
+        tool_results = execute_tool_calls(content, fns)
+
+        messages =
+          Keyword.get(opts, :messages, []) ++
+            [
+              %{role: "assistant", content: content},
+              %{role: "user", content: tool_results}
+            ]
+
+        opts = Keyword.put(opts, :messages, messages)
+        do_run(opts, fns, rounds_remaining - 1)
+
+      other ->
+        other
+    end
+  end
+
+  defp execute_tool_calls(content, fns) do
+    content
+    |> Enum.filter(&match?(%{"type" => "tool_use"}, &1))
+    |> Enum.map(fn %{"id" => id, "name" => name, "input" => input} ->
+      case Map.fetch(fns, name) do
+        {:ok, fun} ->
+          result = fun.(input)
+          %{type: "tool_result", tool_use_id: id, content: to_string(result)}
+
+        :error ->
+          %{
+            type: "tool_result",
+            tool_use_id: id,
+            content: "Error: no function registered for tool '#{name}'",
+            is_error: true
+          }
+      end
+    end)
   end
 
   @doc """

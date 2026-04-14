@@ -6,6 +6,8 @@ defmodule ReqAnthropic.Client do
   live in exactly one place.
   """
 
+  @default_receive_timeout 120_000
+
   @doc """
   Build a `%Req.Request{}` with ReqAnthropic attached.
 
@@ -14,10 +16,14 @@ defmodule ReqAnthropic.Client do
     * Any ReqAnthropic option (see `ReqAnthropic.attach/2`)
     * `:req_options` - keyword forwarded directly to `Req.merge/2` after
       attach, so callers can set `:retry`, `:finch`, `:receive_timeout`, etc.
+
+  The default `receive_timeout` is #{@default_receive_timeout}ms (2 minutes),
+  since LLM API calls regularly exceed Finch's 15-second default.
   """
   @spec build(keyword()) :: Req.Request.t()
   def build(opts \\ []) do
     {req_options, anthropic_opts} = Keyword.pop(opts, :req_options, [])
+    req_options = Keyword.put_new(req_options, :receive_timeout, @default_receive_timeout)
 
     Req.new()
     |> ReqAnthropic.attach(anthropic_opts)

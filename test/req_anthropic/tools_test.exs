@@ -39,8 +39,41 @@ defmodule ReqAnthropic.ToolsTest do
     assert tool.name == "get_weather"
     assert tool.description == "fetch weather"
     assert tool.input_schema.type == "object"
+    refute Map.has_key?(tool, :__function__)
 
     assert_raise KeyError, fn -> Tools.custom(name: "x") end
+  end
+
+  test "custom accepts an optional :function" do
+    fun = fn %{"city" => city} -> "sunny in #{city}" end
+
+    tool =
+      Tools.custom(
+        name: "get_weather",
+        description: "fetch weather",
+        input_schema: %{type: "object"},
+        function: fun
+      )
+
+    assert tool.__function__ == fun
+
+    assert_raise ArgumentError, ":function must be a 1-arity function", fn ->
+      Tools.custom(name: "x", description: "x", input_schema: %{}, function: "not a fun")
+    end
+  end
+
+  test "function_map extracts name => function for tools with __function__" do
+    fun = fn _ -> "ok" end
+
+    tools = [
+      Tools.custom(name: "a", description: "a", input_schema: %{}, function: fun),
+      Tools.custom(name: "b", description: "b", input_schema: %{}),
+      Tools.web_search()
+    ]
+
+    fns = Tools.function_map(tools)
+    assert map_size(fns) == 1
+    assert fns["a"] == fun
   end
 
   test "required_betas collects beta markers from a tool list" do
@@ -57,8 +90,13 @@ defmodule ReqAnthropic.ToolsTest do
   end
 
   test "strip removes internal markers" do
-    tools = [Tools.advisor()]
-    [stripped] = Tools.strip(tools)
-    refute Map.has_key?(stripped, :__beta__)
+    tools = [
+      Tools.advisor(),
+      Tools.custom(name: "x", description: "x", input_schema: %{}, function: fn _ -> "ok" end)
+    ]
+
+    stripped = Tools.strip(tools)
+    assert Enum.all?(stripped, fn t -> not Map.has_key?(t, :__beta__) end)
+    assert Enum.all?(stripped, fn t -> not Map.has_key?(t, :__function__) end)
   end
 end

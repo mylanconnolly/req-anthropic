@@ -172,6 +172,190 @@ defmodule ReqAnthropic.MessagesTest do
     end
   end
 
+  describe "run/1" do
+    test "executes tool calls and loops until final response" do
+      call_count = :counters.new(1, [:atomics])
+
+      Req.Test.stub(ReqAnthropic, fn conn ->
+        :counters.add(call_count, 1, 1)
+        n = :counters.get(call_count, 1)
+
+        if n == 1 do
+          # First call: model requests tool use
+          Req.Test.json(conn, %{
+            "id" => "msg_1",
+            "role" => "assistant",
+            "stop_reason" => "tool_use",
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_1",
+                "name" => "get_weather",
+                "input" => %{"city" => "Tokyo"}
+              }
+            ]
+          })
+        else
+          # Second call: model produces final text
+          # Verify the tool result was sent back
+          messages = conn.body_params["messages"]
+          last_msg = List.last(messages)
+          assert last_msg["role"] == "user"
+          [tool_result] = last_msg["content"]
+          assert tool_result["type"] == "tool_result"
+          assert tool_result["tool_use_id"] == "toolu_1"
+          assert tool_result["content"] == "72°F and sunny in Tokyo"
+
+          Req.Test.json(conn, %{
+            "id" => "msg_2",
+            "role" => "assistant",
+            "stop_reason" => "end_turn",
+            "content" => [%{"type" => "text", "text" => "It's 72°F and sunny in Tokyo."}]
+          })
+        end
+      end)
+
+      tools = [
+        ReqAnthropic.Tools.custom(
+          name: "get_weather",
+          description: "Look up weather",
+          input_schema: %{type: "object", properties: %{city: %{type: "string"}}},
+          function: fn %{"city" => city} -> "72°F and sunny in #{city}" end
+        )
+      ]
+
+      assert {:ok, message} =
+               Messages.run(
+                 model: "claude-haiku-4-5",
+                 max_tokens: 256,
+                 tools: tools,
+                 messages: [%{role: "user", content: "What's the weather in Tokyo?"}]
+               )
+
+      assert message["stop_reason"] == "end_turn"
+      assert [%{"text" => "It's 72°F and sunny in Tokyo."}] = message["content"]
+      assert :counters.get(call_count, 1) == 2
+    end
+
+    test "returns error when max_rounds exceeded" do
+      Req.Test.stub(ReqAnthropic, fn conn ->
+        Req.Test.json(conn, %{
+          "id" => "msg_1",
+          "role" => "assistant",
+          "stop_reason" => "tool_use",
+          "content" => [
+            %{"type" => "tool_use", "id" => "toolu_1", "name" => "ping", "input" => %{}}
+          ]
+        })
+      end)
+
+      tools = [
+        ReqAnthropic.Tools.custom(
+          name: "ping",
+          description: "ping",
+          input_schema: %{type: "object"},
+          function: fn _ -> "pong" end
+        )
+      ]
+
+      assert {:error, %ReqAnthropic.Error{type: "max_rounds_exceeded"}} =
+               Messages.run(
+                 model: "claude-haiku-4-5",
+                 max_tokens: 16,
+                 tools: tools,
+                 messages: [%{role: "user", content: "ping"}],
+                 max_rounds: 2
+               )
+    end
+
+    test "sends error tool_result for tools without a function" do
+      call_count = :counters.new(1, [:atomics])
+
+      Req.Test.stub(ReqAnthropic, fn conn ->
+        :counters.add(call_count, 1, 1)
+        n = :counters.get(call_count, 1)
+
+        if n == 1 do
+          Req.Test.json(conn, %{
+            "id" => "msg_1",
+            "role" => "assistant",
+            "stop_reason" => "tool_use",
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_1",
+                "name" => "no_fn",
+                "input" => %{}
+              }
+            ]
+          })
+        else
+          messages = conn.body_params["messages"]
+          last_msg = List.last(messages)
+          [tool_result] = last_msg["content"]
+          assert tool_result["is_error"] == true
+
+          Req.Test.json(conn, %{
+            "id" => "msg_2",
+            "role" => "assistant",
+            "stop_reason" => "end_turn",
+            "content" => [%{"type" => "text", "text" => "Sorry, I can't do that."}]
+          })
+        end
+      end)
+
+      tools = [
+        ReqAnthropic.Tools.custom(
+          name: "no_fn",
+          description: "no function",
+          input_schema: %{type: "object"}
+        )
+      ]
+
+      assert {:ok, message} =
+               Messages.run(
+                 model: "claude-haiku-4-5",
+                 max_tokens: 256,
+                 tools: tools,
+                 messages: [%{role: "user", content: "call no_fn"}]
+               )
+
+      assert message["stop_reason"] == "end_turn"
+    end
+
+    test "strips __function__ from tools before sending" do
+      Req.Test.stub(ReqAnthropic, fn conn ->
+        [tool] = conn.body_params["tools"]
+        refute Map.has_key?(tool, "__function__")
+        refute Map.has_key?(tool, "__beta__")
+
+        Req.Test.json(conn, %{
+          "id" => "msg_1",
+          "role" => "assistant",
+          "stop_reason" => "end_turn",
+          "content" => [%{"type" => "text", "text" => "ok"}]
+        })
+      end)
+
+      tools = [
+        ReqAnthropic.Tools.custom(
+          name: "x",
+          description: "x",
+          input_schema: %{type: "object"},
+          function: fn _ -> "ok" end
+        )
+      ]
+
+      assert {:ok, _} =
+               Messages.run(
+                 model: "claude-haiku-4-5",
+                 max_tokens: 16,
+                 tools: tools,
+                 messages: [%{role: "user", content: "hi"}]
+               )
+    end
+  end
+
   describe "count_tokens/1" do
     test "POSTs to /v1/messages/count_tokens" do
       Req.Test.stub(ReqAnthropic, fn conn ->

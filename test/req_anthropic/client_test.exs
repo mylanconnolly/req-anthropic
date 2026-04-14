@@ -83,12 +83,17 @@ defmodule ReqAnthropic.ClientTest do
   test "raises AuthError when no key is resolvable" do
     Application.delete_env(:req_anthropic, :api_key)
     Application.delete_env(:req_anthropic, :plug)
+    saved_key = System.get_env("ANTHROPIC_API_KEY")
+    System.delete_env("ANTHROPIC_API_KEY")
 
-    assert_raise ReqAnthropic.AuthError, fn ->
-      Client.build() |> Req.get(url: "/v1/anything")
+    try do
+      assert_raise ReqAnthropic.AuthError, fn ->
+        Client.build() |> Req.get(url: "/v1/anything")
+      end
+    after
+      if saved_key, do: System.put_env("ANTHROPIC_API_KEY", saved_key)
+      Application.put_env(:req_anthropic, :api_key, "test-key")
+      Application.put_env(:req_anthropic, :plug, {Req.Test, ReqAnthropic})
     end
-  after
-    Application.put_env(:req_anthropic, :api_key, "test-key")
-    Application.put_env(:req_anthropic, :plug, {Req.Test, ReqAnthropic})
   end
 end
