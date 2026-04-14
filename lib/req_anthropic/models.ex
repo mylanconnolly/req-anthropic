@@ -3,7 +3,7 @@ defmodule ReqAnthropic.Models do
   The Models API: list available Claude models, retrieve a specific model,
   and look up per-model capabilities.
 
-  Results are cached in an ETS table owned by `ReqAnthropic.Application`.
+  Results are cached in an ETS table owned by the application supervisor.
   Pass `cache: false` to bypass the cache. Configure the TTL with
   `config :req_anthropic, models_cache_ttl: :timer.hours(2)`.
   """
