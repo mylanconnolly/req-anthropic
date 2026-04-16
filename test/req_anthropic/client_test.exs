@@ -1,7 +1,7 @@
 defmodule ReqAnthropic.ClientTest do
   use ExUnit.Case, async: false
 
-  alias ReqAnthropic.{Client, Error}
+  alias ReqAnthropic.{Client, Error, RateLimit, RateLimited}
 
   setup do
     Application.put_env(:req_anthropic, :api_key, "test-key")
@@ -78,6 +78,67 @@ defmodule ReqAnthropic.ClientTest do
     assert err.message == "bad model"
     assert err.status == 400
     assert err.request_id == "req_123"
+  end
+
+  test "2xx responses carry rate-limit data in response.private" do
+    Req.Test.stub(ReqAnthropic, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("anthropic-ratelimit-requests-remaining", "98")
+      |> Plug.Conn.put_resp_header("anthropic-ratelimit-tokens-remaining", "49500")
+      |> Req.Test.json(%{ok: true})
+    end)
+
+    {:ok, %Req.Response{} = resp} =
+      Client.build() |> Req.get(url: "/v1/anything")
+
+    rl = ReqAnthropic.rate_limit(resp)
+    assert %RateLimit{requests_remaining: 98, tokens_remaining: 49500, retry_after: nil} = rl
+  end
+
+  test "429 returns {:error, %RateLimited{}} with retry_after" do
+    Req.Test.stub(ReqAnthropic, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("retry-after", "30")
+      |> Plug.Conn.put_resp_header("anthropic-ratelimit-requests-remaining", "0")
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(
+        429,
+        Jason.encode!(%{
+          "type" => "error",
+          "error" => %{"type" => "rate_limit_error", "message" => "slow down"}
+        })
+      )
+    end)
+
+    assert {:error, %RateLimited{} = err} =
+             Client.build(req_options: [retry: false]) |> Req.get(url: "/v1/anything")
+
+    assert err.retry_after == 30
+    assert err.message == "slow down"
+    assert err.rate_limit.requests_remaining == 0
+  end
+
+  test "non-2xx non-429 errors include rate_limit in Error struct" do
+    Req.Test.stub(ReqAnthropic, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("anthropic-ratelimit-requests-remaining", "50")
+      |> Plug.Conn.put_resp_header("request-id", "req_123")
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(
+        400,
+        Jason.encode!(%{
+          "type" => "error",
+          "error" => %{"type" => "invalid_request_error", "message" => "bad model"}
+        })
+      )
+    end)
+
+    assert {:error, %Error{} = err} =
+             Client.build() |> Req.get(url: "/v1/anything")
+
+    assert err.type == "invalid_request_error"
+    assert err.status == 400
+    assert %RateLimit{requests_remaining: 50} = err.rate_limit
   end
 
   test "raises AuthError when no key is resolvable" do

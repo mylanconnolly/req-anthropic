@@ -35,9 +35,10 @@ defmodule ReqAnthropic.MessagesTest do
       assert [%{"text" => "pong"}] = body["content"]
     end
 
-    test "returns {:error, %Error{}} for non-2xx" do
+    test "returns {:error, %RateLimited{}} for 429" do
       Req.Test.stub(ReqAnthropic, fn conn ->
         conn
+        |> Plug.Conn.put_resp_header("retry-after", "30")
         |> Plug.Conn.put_resp_content_type("application/json")
         |> Plug.Conn.send_resp(
           429,
@@ -48,7 +49,24 @@ defmodule ReqAnthropic.MessagesTest do
         )
       end)
 
-      assert {:error, %ReqAnthropic.Error{type: "rate_limit_error", status: 429}} =
+      assert {:error, %ReqAnthropic.RateLimited{retry_after: 30, message: "slow down"}} =
+               Messages.create(model: "x", max_tokens: 1, messages: [])
+    end
+
+    test "returns {:error, %Error{}} for other non-2xx" do
+      Req.Test.stub(ReqAnthropic, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          400,
+          Jason.encode!(%{
+            "type" => "error",
+            "error" => %{"type" => "invalid_request_error", "message" => "bad request"}
+          })
+        )
+      end)
+
+      assert {:error, %ReqAnthropic.Error{type: "invalid_request_error", status: 400}} =
                Messages.create(model: "x", max_tokens: 1, messages: [])
     end
   end

@@ -4,13 +4,14 @@ defmodule ReqAnthropic.Error do
   with a non-2xx status, or when the client itself fails before sending.
   """
 
-  defexception [:type, :message, :status, :request_id, :raw]
+  defexception [:type, :message, :status, :request_id, :rate_limit, :raw]
 
   @type t :: %__MODULE__{
           type: String.t() | nil,
           message: String.t() | nil,
           status: pos_integer() | nil,
           request_id: String.t() | nil,
+          rate_limit: ReqAnthropic.RateLimit.t() | nil,
           raw: term()
         }
 
@@ -25,7 +26,18 @@ defmodule ReqAnthropic.Error do
   `%{"type" => "error", "error" => %{"type" => ..., "message" => ...}}`.
   """
   @spec from_response(Req.Response.t()) :: t()
-  def from_response(%Req.Response{status: status, body: body, headers: headers}) do
+  def from_response(%Req.Response{} = response) do
+    from_response(response, ReqAnthropic.RateLimit.from_response(response))
+  end
+
+  @doc """
+  Build an Error from a Req response with a pre-parsed `%RateLimit{}`.
+  """
+  @spec from_response(Req.Response.t(), ReqAnthropic.RateLimit.t()) :: t()
+  def from_response(
+        %Req.Response{status: status, body: body, headers: headers},
+        %ReqAnthropic.RateLimit{} = rate_limit
+      ) do
     {type, message} =
       case body do
         %{"error" => %{"type" => t, "message" => m}} -> {t, m}
@@ -38,6 +50,7 @@ defmodule ReqAnthropic.Error do
       message: message,
       status: status,
       request_id: header(headers, "request-id"),
+      rate_limit: rate_limit,
       raw: body
     }
   end

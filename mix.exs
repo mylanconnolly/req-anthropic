@@ -1,7 +1,7 @@
 defmodule ReqAnthropic.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.2.0"
   @source_url "https://github.com/mylanconnolly/req_anthropic"
   @description "An Anthropic-focused API client for Elixir, built on Req."
 
@@ -67,6 +67,8 @@ defmodule ReqAnthropic.MixProject do
           ReqAnthropic.Beta,
           ReqAnthropic.Error,
           ReqAnthropic.AuthError,
+          ReqAnthropic.RateLimit,
+          ReqAnthropic.RateLimited,
           ReqAnthropic.SSE
         ],
         Messages: [

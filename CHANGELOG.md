@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0]
+
+### Added
+
+- `ReqAnthropic.RateLimit` struct — parsed from `anthropic-ratelimit-requests-remaining`,
+  `anthropic-ratelimit-tokens-remaining`, and `retry-after` headers on every
+  response. Access it on successful responses via `ReqAnthropic.rate_limit/1`.
+- `ReqAnthropic.RateLimited` exception — returned as
+  `{:error, %RateLimited{retry_after: n}}` when the API responds with
+  HTTP 429. The `retry_after` field (seconds) is promoted to the top level
+  for ergonomic pattern matching.
+- `ReqAnthropic.rate_limit/1` — extracts the `%RateLimit{}` from a
+  `%Req.Response{}`'s private data.
+- `ReqAnthropic.Error` now carries a `:rate_limit` field
+  (`%RateLimit{} | nil`) populated from response headers on all non-2xx
+  errors.
+
+### Changed
+
+- **Breaking:** HTTP 429 responses now return
+  `{:error, %ReqAnthropic.RateLimited{}}` instead of
+  `{:error, %ReqAnthropic.Error{type: "rate_limit_error"}}`. Callers that
+  pattern-match on `%Error{status: 429}` or `%Error{type: "rate_limit_error"}`
+  should update to match `%RateLimited{}`. The catch-all
+  `{:error, exception}` pattern is unaffected.
+
 ## [0.1.1]
 
 ### Fixed
@@ -80,6 +106,7 @@ Initial release.
   message history and default request options for repeated `Messages`
   calls.
 
-[Unreleased]: https://github.com/mylanconnolly/req_anthropic/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/mylanconnolly/req_anthropic/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mylanconnolly/req_anthropic/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mylanconnolly/req_anthropic/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mylanconnolly/req_anthropic/releases/tag/v0.1.0

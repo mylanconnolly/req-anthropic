@@ -340,15 +340,17 @@ req =
 
 ## Error handling
 
-Non-2xx responses are normalized into `%ReqAnthropic.Error{}`:
+Non-2xx responses are normalized into `%ReqAnthropic.Error{}`, with a
+dedicated `%ReqAnthropic.RateLimited{}` exception for 429 responses:
 
 ```elixir
 case ReqAnthropic.Messages.create(...) do
   {:ok, message} ->
     handle(message)
 
-  {:error, %ReqAnthropic.Error{type: "rate_limit_error", request_id: id}} ->
-    Logger.warning("Rate limited (request #{id}); backing off")
+  {:error, %ReqAnthropic.RateLimited{retry_after: seconds}} ->
+    Logger.warning("Rate limited; retrying in #{seconds}s")
+    Process.sleep(seconds * 1000)
 
   {:error, %ReqAnthropic.Error{} = err} ->
     Logger.error("API error: #{Exception.message(err)}")
@@ -356,7 +358,61 @@ end
 ```
 
 Bang variants (`create!/1`, `get!/2`, …) are available where it makes sense
-and raise `ReqAnthropic.Error` directly.
+and raise directly.
+
+## Rate limits
+
+Every Anthropic API response includes rate-limit headers. ReqAnthropic parses
+them automatically into a `%ReqAnthropic.RateLimit{}` struct with three fields:
+
+- `requests_remaining` — requests left in the current window
+- `tokens_remaining` — tokens left in the current window
+- `retry_after` — seconds to wait (present on 429 responses)
+
+### Extracting from a successful response
+
+Use the plugin layer to get the full `%Req.Response{}`, then call
+`ReqAnthropic.rate_limit/1`:
+
+```elixir
+{:ok, resp} =
+  ReqAnthropic.Client.build(api_key: "sk-ant-...")
+  |> Req.post(
+    url: "/v1/messages",
+    json: %{model: "claude-haiku-4-5", max_tokens: 256, messages: [...]}
+  )
+
+rate_limit = ReqAnthropic.rate_limit(resp)
+rate_limit.requests_remaining  #=> 98
+rate_limit.tokens_remaining    #=> 49500
+```
+
+### Handling 429 (rate limited)
+
+When the API returns HTTP 429, resource modules return
+`{:error, %ReqAnthropic.RateLimited{}}` with `retry_after` promoted to a
+top-level field for easy pattern matching:
+
+```elixir
+case ReqAnthropic.Messages.create(opts) do
+  {:ok, body} ->
+    body
+
+  {:error, %ReqAnthropic.RateLimited{retry_after: n, rate_limit: rl}} ->
+    Logger.warning("Rate limited, #{rl.requests_remaining} requests remaining")
+    Process.sleep(n * 1000)
+    # retry...
+end
+```
+
+### Rate limit data on other errors
+
+Non-429 errors also carry rate-limit metadata in the `rate_limit` field:
+
+```elixir
+{:error, %ReqAnthropic.Error{status: 400, rate_limit: rl}} = result
+rl.requests_remaining  #=> 97
+```
 
 ## Configuration reference
 

@@ -38,7 +38,7 @@ defmodule ReqAnthropic do
       |> Req.post!(url: "/v1/messages", json: %{...})
   """
 
-  alias ReqAnthropic.{Beta, Error}
+  alias ReqAnthropic.{Beta, Error, RateLimit, RateLimited}
 
   @default_base_url "https://api.anthropic.com"
   @default_version "2023-06-01"
@@ -138,13 +138,32 @@ defmodule ReqAnthropic do
   defp maybe_put_header(request, _name, nil), do: request
   defp maybe_put_header(request, name, value), do: Req.Request.put_header(request, name, value)
 
+  @doc """
+  Extract rate-limit metadata from a `%Req.Response{}`.
+
+  The ReqAnthropic response step parses `anthropic-ratelimit-*` and
+  `retry-after` headers on every response and stashes a
+  `%ReqAnthropic.RateLimit{}` in the response's private data.
+
+      {:ok, resp} = ReqAnthropic.Client.build(opts) |> Req.post(...)
+      ReqAnthropic.rate_limit(resp)
+      #=> %ReqAnthropic.RateLimit{requests_remaining: 42, ...}
+  """
+  @spec rate_limit(Req.Response.t()) :: RateLimit.t() | nil
+  def rate_limit(%Req.Response{} = response) do
+    response.private[:req_anthropic_rate_limit]
+  end
+
   defp decode_error_step({request, response}) do
+    rate_limit = RateLimit.from_response(response)
+    response = Req.Response.put_private(response, :req_anthropic_rate_limit, rate_limit)
     decode? = Map.get(request.options, :decode_errors, true)
 
     cond do
       not decode? -> {request, response}
       response.status in 200..299 -> {request, response}
-      true -> {request, Error.from_response(response)}
+      response.status == 429 -> {request, RateLimited.from_response(response, rate_limit)}
+      true -> {request, Error.from_response(response, rate_limit)}
     end
   end
 end
