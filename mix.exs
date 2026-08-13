@@ -1,7 +1,7 @@
 defmodule ReqAnthropic.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.2.1"
   @source_url "https://github.com/mylanconnolly/req_anthropic"
   @description "An Anthropic-focused API client for Elixir, built on Req."
 
@@ -30,7 +30,7 @@ defmodule ReqAnthropic.MixProject do
 
   defp deps do
     [
-      {:req, "~> 0.5.6"},
+      {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:plug, "~> 1.15", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
